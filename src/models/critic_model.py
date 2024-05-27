@@ -13,23 +13,20 @@ class Critic_Network (nn.Module):
     def __init__ (
         self,
         input_dim: int, 
-        device,
         hidden_dims: Optional[List] = None,
-        out_put_dim:int = 1,
+        output_dim:int = 1,
         name = 'mlp_cretic',
     ):
         super().__init__()
         self.name = name 
-        self.device = device
-        self.to(device)
         
-        self.flatten = nn.Flatten().to(device)
+        self.flatten = nn.Flatten()
         modules = []
         input_dim = input_dim*4
         if hidden_dims == None:
             main_size = 2*input_dim
             hidden_dims = []
-            last_layer = 8 if out_put_dim == 1 else out_put_dim
+            last_layer = 8 if output_dim == 1 else output_dim
             while main_size > last_layer: 
                 hidden_dims.append(int(main_size))
                 main_size = int(main_size/2)
@@ -40,8 +37,8 @@ class Critic_Network (nn.Module):
                     nn.ReLU())
             )
             input_dim = h_dim
-        modules.append(nn.Sequential(nn.Linear(input_dim, out_put_dim)))    
-        self.critic = nn.Sequential(*modules).to(device)
+        modules.append(nn.Sequential(nn.Linear(input_dim, output_dim)))    
+        self.critic = nn.Sequential(*modules)
     
     def forward(self, external, *args):
         return self.critic(self.flatten(external))
