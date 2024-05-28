@@ -18,6 +18,7 @@ def train_model (env: gym_env, sacManger, train_step):
     for i in tqdm(range(train_step)):
         
         observation, info = env.reset()
+        print(type(observation))
         episod_reward = 0.0
         episod_steps = 0
         done = False
