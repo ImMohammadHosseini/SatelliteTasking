@@ -6,12 +6,16 @@ from typing import List, Optional
 from torch.optim import Adam, SGD, RMSprop
 from torch.distributions.categorical import Categorical
 
-from configs.sac_configs import SACConfig
+
+from .src.reply_buffer import ReplayBuffer
+
+
+from .src.sac_configs import SACConfig
 
 class SACManager ():
     def __init__ (
         self,
-        config: SACConfig,
+        inputdim,
         actor_model: torch.nn.Module,
         critic_local1: torch.nn.Module,
         critic_local2: torch.nn.Module,
@@ -19,7 +23,7 @@ class SACManager ():
         critic_target2: torch.nn.Module,
     ):
         self.save_path = 'pretrained/'
-        self.savePath = 'pretrained/'
+        self.config = SACConfig()
         
         self.actor_model = actor_model
         self.critic_local1 = critic_local1
@@ -40,9 +44,9 @@ class SACManager ():
         self.alpha = self.log_alpha
         self.alpha_optimizer = Adam([self.log_alpha], lr=self.config.alpha_lr)
         
-        self.memory = SACReplayBuffer(self.config.generat_link_number, 
-                                      self.config, self.actor_model.config, action_num)
-        self.dim = dim
+        self.memory = ReplayBuffer(self.config.buffer_size, self.config.batch_size,
+                                   self.actor_model.inpu)
+        
         self.target_entropy = 0.98 * -np.log(1 / (self.actor_model.config.inst_obs_size * \
                                                   self.actor_model.config.knapsack_obs_size))
         if path.exists(self.save_path):
@@ -56,9 +60,9 @@ class SACManager ():
     ):
         act_dist = Categorical(output_Generated)
         act = act_dist.sample()
-        z = firstGenerated == 0.0
+        z = output_Generated == 0.0
         z = z.float() * 1e-8
-        log_prob = torch.log(firstGenerated + z)
+        log_prob = torch.log(output_Generated + z)
         return act.unsqueeze(0), output_Generated, log_prob
     
     
