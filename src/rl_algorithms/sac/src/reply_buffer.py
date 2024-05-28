@@ -3,13 +3,12 @@
 import numpy as np
 import torch
 from typing import Optional
-from configs.sac_configs import SACConfig
-from configs.transformers_model_configs import TransformerKnapsackConfig
+from .sac_configs import SACConfig
 from os import path, makedirs
 
 
 
-class SACReplayBuffer ():
+class ReplayBuffer ():
     def __init__ (
         self,
         buffer_size,
