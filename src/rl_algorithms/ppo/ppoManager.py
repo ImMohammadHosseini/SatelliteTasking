@@ -6,49 +6,34 @@ from typing import List, Optional
 from torch.optim import Adam, SGD, RMSprop
 from torch.distributions.categorical import Categorical
 from .src.reply_buffer import ReplayBuffer
-from .src.sac_configs import SACConfig
+from .src.ppo_configs import PPOConfig
 
-class SACManager ():
-    def __init__ (
+class PPOManager ():
+    def __init__(
         self,
         input_dim,
         output_dim,
         actor_model: torch.nn.Module,
-        critic_local1: torch.nn.Module,
-        critic_local2: torch.nn.Module,
-        critic_target1: torch.nn.Module,
-        critic_target2: torch.nn.Module,
+        critic_model: torch.nn.Module,        
     ):
-        self.save_path = 'pretrained/sac/'
-        self.config = SACConfig()
+        self.save_path = 'pretrained/ppo/'
+        self.config = PPOConfig()
         self.input_dim = input_dim
         self.output_dim = output_dim
         
         self.actor_model = actor_model
-        self.critic_local1 = critic_local1
-        self.critic_local2 = critic_local2
-        self.critic_target1 = critic_target1
-        self.critic_target2 = critic_target2
+        self.critic_model = critic_model
         
         self.actor_optimizer = Adam(self.actor_model.parameters(), 
                                     lr=self.config.actor_lr)
-        self.critic_optimizer1 = Adam(self.critic_local1.parameters(),
-                                      lr=self.config.critic_lr)
-        self.critic_optimizer2 = Adam(self.critic_local2.parameters(), 
-                                      lr=self.config.critic_lr)
+        self.critic_optimizer = Adam(self.critic_model.parameters(), 
+                                     lr=self.config.critic_lr)
         
-        self.soft_update(1.)
+        self.memory = ReplayBuffer()
         
-        self.log_alpha = torch.tensor(np.log(self.config.alpha_initial), requires_grad=True)
-        self.alpha = self.log_alpha
-        self.alpha_optimizer = Adam([self.log_alpha], lr=self.config.alpha_lr)
-        
-        self.memory = ReplayBuffer(self.config.buffer_size, self.config.batch_size,
-                                   self.input_dim)
-        
-        self.target_entropy = 0.98 * -np.log(1 / (self.output_dim))
         if path.exists(self.save_path):
             self.load_models()
+    
             
         
     def getAction (
@@ -58,121 +43,95 @@ class SACManager ():
         output_Generated = self.actor_model(obs)
         act_dist = Categorical(output_Generated)
         act = act_dist.sample()
-        z = output_Generated == 0.0
-        z = z.float() * 1e-8
-        log_prob = torch.log(output_Generated + z)
-        return act, output_Generated, log_prob
+        log_prob = act_dist.log_prob(act)
+        new_val = self.critic_model(obs) 
+        return act, log_prob, new_val
     
+    def generate_batch (
+        self,
+    ):
+        batch_start = np.arange(0, self.config.n_state, self.config.ppo_batch_size)
+        indices = np.arange(self.config.n_state, dtype=np.int64)
+        np.random.shuffle(indices)
+        batches = [indices[i:i+self.config.ppo_batch_size] for i in batch_start]
+        
+        return batches
     
     def train (
         self,     
-        ):  
-        
-        if self.memory._transitions_stored < self.config.batch_size:
-            return
-        memoryObs, memorynNewObs, memoryAct, memoryRwd, memoryDon = \
-            self.memory.get_memory()
+    ):  
+        memoryObs, memoryAct, memoryPrb, memoryVal, memoryRwd, memoryDon \
+                = self.memory.get_memory()
         
         obs = memoryObs.to(torch.float32).detach()
-        newObs = memorynNewObs.to(torch.float32).detach()
         acts = memoryAct.to(torch.int64).detach()
+        probs = memoryPrb.to(torch.float32).detach()
         rewards = memoryRwd.detach()
+        vals = memoryVal.detach()
         done = memoryDon.detach()
         
-        #critic loss 
-        self.critic_optimizer1.zero_grad()
-        self.critic_optimizer2.zero_grad()
-        
-        #TODO check the getAction softmax
-        _, prob, log_prob = self.getAction(newObs)
-        
-        #print(newObs.dtype)
-        next1_values = self.critic_target1(newObs)
-        next2_values = self.critic_target2(newObs)
-        
-        
-        soft_state_values = (prob * (
-                    torch.min(next1_values, next2_values) - self.alpha * log_prob
-            )).sum(dim=1)
-        
-        next_q_values = rewards + ~done * self.config.discount_rate*soft_state_values
-        
-        soft_q1_values = self.critic_local1(obs)
-        soft_q1_values = soft_q1_values.gather(1, acts.unsqueeze(1)).squeeze(-1)
-        
-        soft_q2_values = self.critic_local2(obs)
-        soft_q2_values = soft_q2_values.gather(1, acts.unsqueeze(1)).squeeze(-1)
-        
-        critic1_square_error = torch.nn.MSELoss(reduction="none")(soft_q1_values.float(), next_q_values.float())
-        critic2_square_error = torch.nn.MSELoss(reduction="none")(soft_q2_values.float(), next_q_values.float())
-        
-        weight_update = [min(l1.item(), l2.item()) for l1, l2 in zip(critic1_square_error, critic2_square_error)]
-        self.memory.update_weights(weight_update)
+        for _ in range(self.config.ppo_epochs):
+            batches = self.generate_batch(self.config.n_state, self.config.ppo_batch_size)
 
-        critic1_loss = critic1_square_error.mean()#.to(torch.float32)
-        critic2_loss = critic2_square_error.mean()#.to(torch.float32)
-        
-        
-        critic1_loss.backward(retain_graph=True)
-        critic2_loss.backward(retain_graph=True)
-        self.critic_optimizer1.step()
-        self.critic_optimizer2.step()
-        
-        #actor loss
-        self.actor_optimizer.zero_grad()
-        _, prob, log_prob = self.getAction(obs)
+            advantage = torch.zeros(self.config.n_state, dtype=torch.float32)
+            for t in range(self.config.n_state-1):
+                discount = 1
+                a_t = 0
+                for k in range(t, self.config.n_state-1):
+                    a_t += discount*(rewards[k] + self.config.gamma*vals[k+1]*\
+                                     (1-int(done[k])) - vals[k])                
+                    discount *= self.config.gamma*self.config.gae_lambda
+                advantage[t] = a_t
 
-        
-        local1_values = self.critic_local1(obs)
-        local2_values = self.critic_local2(obs)
-        
-        inside_term = self.alpha * log_prob - torch.min(local1_values, local2_values)
-        
-        actor_loss = (prob * inside_term).sum(dim=1).mean()
-        
-        actor_loss.backward()
-        self.actor_optimizer.step()
-        
-        #temperature loss
-        self.alpha_optimizer.zero_grad()
-        
-        alpha_loss = -(self.log_alpha * (log_prob + self.target_entropy).detach()).mean()
-        alpha_loss.backward()
-        self.alpha_optimizer.step()
-        self.alpha = self.log_alpha.exp() 
-        
-        self.soft_update(self.config.tau)
-        
-    def soft_update(self, tau):
-        for target_param, local_param in zip(self.critic_target1.parameters(), self.critic_local1.parameters()):
-            target_param.data.copy_(tau * local_param.data + (1 - tau) * target_param.data)
-        
-        for target_param, local_param in zip(self.critic_target2.parameters(), self.critic_local2.parameters()):
-            target_param.data.copy_(tau * local_param.data + (1 - tau) * target_param.data)
-        
+            advantage = advantage.to(self.actor_model.device)
+            for batch in batches:
+                batchObs = obs[batch].detach()
+                batchActs = acts[batch].detach()
+                batchProbs = probs[batch].squeeze().detach()
+                batchVals = vals[batch].detach()
+                batchAdvs = advantage[batch].detach()
+                
+                batchObs.requires_grad = True
+                batchProbs.requires_grad = True
+                batchVals.requires_grad = True
+                batchAdvs.requires_grad = True
+                
+                output_Generated = self.actor_model(batchObs)
+                act_dist = Categorical(output_Generated)
+                new_log_probs = act_dist.log_prob(batchActs.squeeze())
+                newVal = self.critic_model(batchObs)        
+            
+                prob_ratio = new_log_probs.exp() / batchProbs.exp()
+                weighted_probs = batchAdvs * prob_ratio
+                weighted_clipped_probs = torch.clamp(prob_ratio, 1-self.config.cliprange,
+                            1+self.config.cliprange)*batchAdvs
+                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
+                returns = batchAdvs.unsqueeze(dim=1) + batchVals
+            
+                critic_loss = (returns-newVal)**2
+                critic_loss = torch.mean(critic_loss)
+
+                total_loss = actor_loss + 0.5*critic_loss
+                
+                self.actor_optimizer.zero_grad()
+                self.critic_optimizer.zero_grad()
+                total_loss.backward()
+                self.actor_optimizer.step()
+                self.critic_optimizer.step()
+
+
+        self.memory.reset_memory()
+    
     def load_models (self):
         file_path = self.save_path + "/" + self.actor_model.name + ".ckpt"
         checkpoint = torch.load(file_path)
         self.actor_model.load_state_dict(checkpoint['model_state_dict'])
         self.actor_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
-        file_path = self.save_path + "/" + self.critic_local1.name + ".ckpt"
+        file_path = self.save_path + "/" + self.critic_model.name + ".ckpt"
         checkpoint = torch.load(file_path)
-        self.critic_local1.load_state_dict(checkpoint['model_state_dict'])
-        self.critic_optimizer1.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-        file_path = self.save_path + "/" + self.critic_local2.name + ".ckpt"
-        checkpoint = torch.load(file_path)
-        self.critic_local2.load_state_dict(checkpoint['model_state_dict'])
-        self.critic_optimizer2.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-        file_path = self.save_path + "/" + self.critic_target1.name + ".ckpt"
-        checkpoint = torch.load(file_path)
-        self.critic_target1.load_state_dict(checkpoint['model_state_dict'])
-        
-        file_path = self.save_path + "/" + self.critic_target2.name + ".ckpt"
-        checkpoint = torch.load(file_path)
-        self.critic_target2.load_state_dict(checkpoint['model_state_dict'])
+        self.critic_model.load_state_dict(checkpoint['model_state_dict'])
+        self.critic_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
     def save_models (self):
         if not path.exists(self.save_path):
@@ -183,26 +142,11 @@ class SACManager ():
             'optimizer_state_dict': self.actor_optimizer.state_dict()}, 
             file_path)
         
-        file_path = self.save_path + "/" + self.critic_local1.name + ".ckpt"
+        file_path = self.save_path + "/" + self.critic_model.name + ".ckpt"
         torch.save({
-            'model_state_dict': self.critic_local1.state_dict(),
-            'optimizer_state_dict': self.critic_optimizer1.state_dict()}, 
-            file_path)
-        
-        file_path = self.save_path + "/" + self.critic_local2.name + ".ckpt"
-        torch.save({
-            'model_state_dict': self.critic_local2.state_dict(),
-            'optimizer_state_dict': self.critic_optimizer2.state_dict()}, 
-            file_path)
-        
-        file_path = self.save_path + "/" + self.critic_target1.name + ".ckpt"
-        torch.save({
-            'model_state_dict': self.critic_target1.state_dict()}, 
-            file_path)
-        
-        file_path = self.save_path + "/" + self.critic_target2.name + ".ckpt"
-        torch.save({
-            'model_state_dict': self.critic_target2.state_dict()}, 
+            'model_state_dict': self.critic_model.state_dict(),
+            'optimizer_state_dict': self.critic_optimizer.state_dict()}, 
             file_path)
         
         
+          
