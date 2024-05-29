@@ -3,12 +3,11 @@
 import numpy as np
 import torch
 from typing import Optional
-from .sac_configs import SACConfig
+from .ppo_configs import PPOConfig
 from os import path, makedirs
 
 class ReplayBuffer ():
-    def __init__ (self, link_number):
-        self.link_number = link_number
+    def __init__ (self):
         self.reset_memory()
     
     def reset_memory (self) :
@@ -26,14 +25,14 @@ class ReplayBuffer ():
         prob,
         value, 
         reward,
-        done: bool,
+        done,
 	):
-        self.observation.append(torch.cat([observation.unsqueeze(1)]*self.link_number, 1).cpu())
+        self.observation.append(observation)
         self.action.append(action)
         self.prob.append(prob)
         self.val.append(value)
-        self.reward.append(reward)
-        self.done.append(done)
+        self.reward.append(torch.tensor([reward*100]))
+        self.done.append(torch.tensor([done]))
     
     def get_memory (self):
         return torch.cat(self.observation, 0), \

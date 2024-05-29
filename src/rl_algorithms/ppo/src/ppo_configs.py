@@ -13,7 +13,7 @@ class PPOConfig(object):
     """
     def __init__ (
         self,
-        memory_size: int = 64,
+        n_state: int = 64,
         ppo_batch_size: int = 8,
         ppo_epochs: int = 10,
         gamma: float = 0.9,
@@ -24,10 +24,9 @@ class PPOConfig(object):
         seed: int = 0,
         
     ):
-        self.memory_size = memory_size 
+        self.n_state = n_state 
         self.ppo_batch_size = ppo_batch_size
         self.ppo_epochs = ppo_epochs
-        self.extra_batch = extra_batch
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.cliprange = cliprange
