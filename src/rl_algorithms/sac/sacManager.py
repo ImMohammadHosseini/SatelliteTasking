@@ -5,25 +5,24 @@ from os import path, makedirs
 from typing import List, Optional
 from torch.optim import Adam, SGD, RMSprop
 from torch.distributions.categorical import Categorical
-
-
 from .src.reply_buffer import ReplayBuffer
-
-
 from .src.sac_configs import SACConfig
 
 class SACManager ():
     def __init__ (
         self,
-        inputdim,
+        input_dim,
+        output_dim,
         actor_model: torch.nn.Module,
         critic_local1: torch.nn.Module,
         critic_local2: torch.nn.Module,
         critic_target1: torch.nn.Module,
         critic_target2: torch.nn.Module,
     ):
-        self.save_path = 'pretrained/'
+        self.save_path = 'pretrained/sac/'
         self.config = SACConfig()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         
         self.actor_model = actor_model
         self.critic_local1 = critic_local1
@@ -45,49 +44,47 @@ class SACManager ():
         self.alpha_optimizer = Adam([self.log_alpha], lr=self.config.alpha_lr)
         
         self.memory = ReplayBuffer(self.config.buffer_size, self.config.batch_size,
-                                   self.actor_model.inpu)
+                                   self.input_dim)
         
-        self.target_entropy = 0.98 * -np.log(1 / (self.actor_model.config.inst_obs_size * \
-                                                  self.actor_model.config.knapsack_obs_size))
+        self.target_entropy = 0.98 * -np.log(1 / (self.output_dim))
         if path.exists(self.save_path):
             self.load_models()
-            self.pretrain_need = False
-        else: self.pretrain_need = True
+            
         
     def getAction (
         self, 
-        output_Generated,
+        obs,
     ):
+        output_Generated = self.actor_model(obs)
         act_dist = Categorical(output_Generated)
         act = act_dist.sample()
         z = output_Generated == 0.0
         z = z.float() * 1e-8
         log_prob = torch.log(output_Generated + z)
-        return act.unsqueeze(0), output_Generated, log_prob
+        return act, output_Generated, log_prob
     
     
     def train (
-        self, 
-        mode = 'normal'
-    ):  
+        self,     
+        ):  
         
+        if self.memory._transitions_stored < self.config.batch_size:
+            return
         memoryObs, memorynNewObs, memoryAct, memoryRwd, memoryDon = \
             self.memory.get_memory()
         
-        obs = memoryObs.to(self.actor_model.device).to(torch.float32).detach()
-        newObs = memorynNewObs.to(self.actor_model.device).to(torch.float32).detach()
-        acts = memoryAct.to(self.actor_model.device).to(torch.int64).detach()
-        rewards = memoryRwd.to(self.actor_model.device).detach()
-        done = memoryDon.to(self.actor_model.device).detach()
+        obs = memoryObs.to(torch.float32).detach()
+        newObs = memorynNewObs.to(torch.float32).detach()
+        acts = memoryAct.to(torch.int64).detach()
+        rewards = memoryRwd.detach()
+        done = memoryDon.detach()
         
         #critic loss 
         self.critic_optimizer1.zero_grad()
         self.critic_optimizer2.zero_grad()
         
-        #generatedAction = self.actor_model.generateOneStep(nextObservation)
-        firstGenerated, secondGenerated, _ = self.actor_model.generateOneStep(
-            newObs, torch.tensor([1], dtype=torch.int64), None)
-        _, prob, log_prob = self._choose_actions(firstGenerated, secondGenerated)
+        #TODO check the getAction softmax
+        _, prob, log_prob = self.getAction(newObs)
         
         #print(newObs.dtype)
         next1_values = self.critic_target1(newObs)
@@ -98,13 +95,13 @@ class SACManager ():
                     torch.min(next1_values, next2_values) - self.alpha * log_prob
             )).sum(dim=1)
         
-        next_q_values = rewards.squeeze() + ~done * self.config.discount_rate*soft_state_values
+        next_q_values = rewards + ~done * self.config.discount_rate*soft_state_values
         
         soft_q1_values = self.critic_local1(obs)
-        soft_q1_values = soft_q1_values.gather(1, acts[:,:,0]).squeeze(-1)
+        soft_q1_values = soft_q1_values.gather(1, acts.unsqueeze(1)).squeeze(-1)
         
         soft_q2_values = self.critic_local2(obs)
-        soft_q2_values = soft_q2_values.gather(1, acts[:,:,0]).squeeze(-1)
+        soft_q2_values = soft_q2_values.gather(1, acts.unsqueeze(1)).squeeze(-1)
         
         critic1_square_error = torch.nn.MSELoss(reduction="none")(soft_q1_values.float(), next_q_values.float())
         critic2_square_error = torch.nn.MSELoss(reduction="none")(soft_q2_values.float(), next_q_values.float())
@@ -123,10 +120,8 @@ class SACManager ():
         
         #actor loss
         self.actor_optimizer.zero_grad()
-        firstGenerated, secondGenerated, _ = self.actor_model.generateOneStep(
-            obs, torch.tensor([1], dtype=torch.int64), None)
-        #generatedAction = self.actor_model.generateOneStep(externalObservation)
-        _, prob, log_prob = self._choose_actions(firstGenerated, secondGenerated)
+        _, prob, log_prob = self.getAction(obs)
+
         
         local1_values = self.critic_local1(obs)
         local2_values = self.critic_local2(obs)
@@ -147,6 +142,7 @@ class SACManager ():
         self.alpha = self.log_alpha.exp() 
         
         self.soft_update(self.config.tau)
+        
     def soft_update(self, tau):
         for target_param, local_param in zip(self.critic_target1.parameters(), self.critic_local1.parameters()):
             target_param.data.copy_(tau * local_param.data + (1 - tau) * target_param.data)

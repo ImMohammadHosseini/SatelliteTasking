@@ -13,7 +13,7 @@ class SACConfig(object):
     """
     def __init__ (
         self,
-        batch_size: int = 32,
+        batch_size: int = 64,
         buffer_size: int = int(1e6),
         alpha_initial: float = 1.,
         discount_rate: float = 0.99,
