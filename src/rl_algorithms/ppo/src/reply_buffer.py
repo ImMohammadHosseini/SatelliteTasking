@@ -31,7 +31,7 @@ class ReplayBuffer ():
         self.action.append(action)
         self.prob.append(prob)
         self.val.append(value)
-        self.reward.append(torch.tensor([reward*100]))
+        self.reward.append(torch.tensor([reward if reward == -1 else reward *1000]))
         self.done.append(torch.tensor([done]))
     
     def get_memory (self):

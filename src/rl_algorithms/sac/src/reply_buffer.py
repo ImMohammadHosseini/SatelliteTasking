@@ -48,7 +48,8 @@ class ReplayBuffer ():
         self.observation[index] = observation.cpu().detach().numpy()
         self.observation_[index] = new_observation.cpu().detach().numpy()
         self.action[index] = action
-        self.reward[index] = reward
+        #print(reward if reward == -1 else reward *1000)
+        self.reward[index] = reward if reward == -1 else reward *1000
         self.done[index] = done
         self.weights[index] = self.max_weight
         self._transitions_stored += 1
