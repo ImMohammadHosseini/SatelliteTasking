@@ -16,7 +16,7 @@ class PPOManager ():
         actor_model: torch.nn.Module,
         critic_model: torch.nn.Module,        
     ):
-        self.save_path = 'pretrained/ppo/'
+        self.save_path = 'ppo/'#'pretrained/ppo/'
         self.config = PPOConfig()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -71,7 +71,7 @@ class PPOManager ():
         done = memoryDon.detach()
         
         for _ in range(self.config.ppo_epochs):
-            batches = self.generate_batch(self.config.n_state, self.config.ppo_batch_size)
+            batches = self.generate_batch()
 
             advantage = torch.zeros(self.config.n_state, dtype=torch.float32)
             for t in range(self.config.n_state-1):
@@ -83,7 +83,6 @@ class PPOManager ():
                     discount *= self.config.gamma*self.config.gae_lambda
                 advantage[t] = a_t
 
-            advantage = advantage.to(self.actor_model.device)
             for batch in batches:
                 batchObs = obs[batch].detach()
                 batchActs = acts[batch].detach()
