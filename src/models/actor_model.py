@@ -21,7 +21,7 @@ class Actor_Network (nn.Module):
         self.name = name 
         
         
-        self.flatten = nn.Flatten()
+        #self.flatten = nn.Flatten()
         modules = []
         input_dim = input_dim
         if hidden_dims == None:
@@ -35,14 +35,14 @@ class Actor_Network (nn.Module):
             modules.append(
                 nn.Sequential(
                     nn.Linear(input_dim, out_features=h_dim),
-                    nn.ReLU())
+                    nn.ReLU(),)
             )
             input_dim = h_dim
         modules.append(nn.Sequential(nn.Linear(input_dim, output_dim), nn.Softmax()))    
         self.actor = nn.Sequential(*modules)
     
     def forward(self, obs, *args):
-        return self.actor(self.flatten(obs))
+        return self.actor(obs)
     
     
     
