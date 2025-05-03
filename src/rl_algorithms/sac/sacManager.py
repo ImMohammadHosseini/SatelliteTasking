@@ -66,10 +66,12 @@ class SACManager ():
     
     def train (
         self,     
-        ):  
-        
+    ):  
+        #for p in self.critic_local1.parameters():
+        #    print(p.requires_grad)
         if self.memory._transitions_stored < self.config.batch_size:
             return
+        
         memoryObs, memorynNewObs, memoryAct, memoryRwd, memoryDon = \
             self.memory.get_memory()
         
@@ -88,6 +90,8 @@ class SACManager ():
         
         #print(newObs.dtype)
         next1_values = self.critic_target1(newObs)
+        #print('hhhhhhh')
+        #print(next1_values.size())
         next2_values = self.critic_target2(newObs)
         
         
@@ -95,28 +99,35 @@ class SACManager ():
                     torch.min(next1_values, next2_values) - self.alpha * log_prob
             )).sum(dim=1)
         
+        #print(soft_state_values.size())
         next_q_values = rewards + ~done * self.config.discount_rate*soft_state_values
-        
+        #print(next_q_values.size())
+
         soft_q1_values = self.critic_local1(obs)
         soft_q1_values = soft_q1_values.gather(1, acts.unsqueeze(1)).squeeze(-1)
-        
+        #print(soft_q1_values.size())
+
         soft_q2_values = self.critic_local2(obs)
         soft_q2_values = soft_q2_values.gather(1, acts.unsqueeze(1)).squeeze(-1)
         
         critic1_square_error = torch.nn.MSELoss(reduction="none")(soft_q1_values.float(), next_q_values.float())
         critic2_square_error = torch.nn.MSELoss(reduction="none")(soft_q2_values.float(), next_q_values.float())
-        
+        #print(critic2_square_error.size())
+
         weight_update = [min(l1.item(), l2.item()) for l1, l2 in zip(critic1_square_error, critic2_square_error)]
         self.memory.update_weights(weight_update)
 
         critic1_loss = critic1_square_error.mean()#.to(torch.float32)
         critic2_loss = critic2_square_error.mean()#.to(torch.float32)
-        
-        
+        print('hh')
+        print(critic2_loss)
         critic1_loss.backward(retain_graph=True)
         critic2_loss.backward(retain_graph=True)
+        print(critic2_loss.is_leaf)
+        print(critic2_loss.grad)
         self.critic_optimizer1.step()
         self.critic_optimizer2.step()
+        
         
         #actor loss
         self.actor_optimizer.zero_grad()
@@ -131,7 +142,14 @@ class SACManager ():
         actor_loss = (prob * inside_term).sum(dim=1).mean()
         
         actor_loss.backward()
+        print('hgg')
+
+        print(actor_loss.grad)
+
         self.actor_optimizer.step()
+        print(actor_loss.grad)
+        for p in self.actor_model.parameters():
+            print(p.grad)
         
         #temperature loss
         self.alpha_optimizer.zero_grad()

@@ -21,7 +21,7 @@ class Critic_Network (nn.Module):
         self.name = name 
         self.output_dim = output_dim
         
-        self.flatten = nn.Flatten()
+        #self.flatten = nn.Flatten()
         modules = []
         input_dim = input_dim
         if hidden_dims == None:
@@ -35,19 +35,19 @@ class Critic_Network (nn.Module):
             modules.append(
                 nn.Sequential(
                     nn.Linear(input_dim, out_features=h_dim),
-                    nn.ReLU())
+                    nn.ReLU(),)
             )
             input_dim = h_dim
         modules.append(nn.Sequential(nn.Linear(input_dim, output_dim)))    
         self.actor = nn.Sequential(*modules)
-        self.soft_max = nn.Softmax()
+        #self.soft_max = nn.Softmax()
     
     def forward(self, obs, *args):
-        x=self.actor(self.flatten(obs))
-        if self.output_dim == 1:
-            return x 
-        else :
-            return self.soft_max(x)
+        x=self.actor(obs)
+        #if self.output_dim == 1:
+        return x 
+        #else :
+            #return self.soft_max(x)
         
     
     

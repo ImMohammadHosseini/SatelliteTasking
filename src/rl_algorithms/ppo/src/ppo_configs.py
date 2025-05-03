@@ -14,13 +14,13 @@ class PPOConfig(object):
     def __init__ (
         self,
         n_state: int = 64,
-        ppo_batch_size: int = 8,
+        ppo_batch_size: int = 16,
         ppo_epochs: int = 10,
         gamma: float = 0.9,
         gae_lambda: float = 0.97,
         cliprange: float = 0.2,
-        actor_lr: float = 1e-5,
-        critic_lr: float = 1e-5,
+        actor_lr: float = 1e-3,
+        critic_lr: float = 1e-3,
         seed: int = 0,
         
     ):

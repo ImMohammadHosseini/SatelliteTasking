@@ -13,10 +13,14 @@ RESULT_PATH = 'results/train/'
 
 def train_model (env: gym_env, sacManger, train_step):
     result_path = RESULT_PATH
-    best_reward = -1e4
+    best_reward = -1
     reward_history = []; steps_history = []
+    with open(result_path+'sac.pickle', 'rb') as handle:
+        results = pickle.load(handle)
+    reward_history = results['reward'][0:3500]
+    steps_history = results['steps'][0:3500]
 
-    for i in tqdm(range(train_step)):
+    for i in tqdm(range(3500, train_step)):
         
         observation, info = env.reset()
         observation = torch.from_numpy(observation).unsqueeze(0).to(torch.float32)
@@ -27,9 +31,9 @@ def train_model (env: gym_env, sacManger, train_step):
         while not done:
             action, _, _ = sacManger.getAction(observation)
             observation_, reward, done, truncated, info = env.step(int(action))
-            
+            #print(int(action))
             observation_ = torch.from_numpy(observation_).unsqueeze(0).to(torch.float32)
-
+            #print(reward*1000)
             sacManger.memory.save_step(observation, observation_, \
                                                action, reward, done)
             
@@ -62,6 +66,10 @@ def ppo_train_model (env: gym_env, ppoManger, train_step):
     result_path = RESULT_PATH
     best_reward = -1e4
     reward_history = []; steps_history = []
+    #with open(result_path+'sac.pickle', 'rb') as handle:
+    #    results = pickle.load(handle)
+    #reward_history = results['reward']
+    #steps_history = results['steps'] 
 
     for i in tqdm(range(train_step)):
         
@@ -75,13 +83,14 @@ def ppo_train_model (env: gym_env, ppoManger, train_step):
         while not done:
             action, log_prob, value = ppoManger.getAction(observation)
             observation_, reward, done, truncated, info = env.step(int(action))
-            
+            #print(int(action))
+
             observation_ = torch.from_numpy(observation_).unsqueeze(0).to(torch.float32)
             
             
             ppoManger.memory.save_step(observation, action, log_prob, value, \
                                        reward, done)
-            
+            #print(reward)
             episod_reward += reward
             episod_steps += 1
             
